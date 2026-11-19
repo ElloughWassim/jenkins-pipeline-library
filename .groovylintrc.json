@@ -1,0 +1,21 @@
+{
+  "extends": "recommended",
+  "rules": {
+    "CompileStatic": "off",
+    "JavaIoPackageAccess": {
+      "doNotApplyToFileNames": "run-tests.groovy"
+    },
+    "CatchThrowable": {
+      "doNotApplyToFileNames": "run-tests.groovy"
+    },
+    "SystemExit": {
+      "doNotApplyToFileNames": "run-tests.groovy"
+    },
+    "ConstantAssertExpression": {
+      "doNotApplyToFileNames": "run-tests.groovy"
+    },
+    "UnusedVariable": {
+      "ignoreVariableNames": "_"
+    }
+  }
+}

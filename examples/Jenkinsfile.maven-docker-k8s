@@ -1,0 +1,85 @@
+// Example: Java/Maven application -> SonarQube -> Docker image -> Trivy -> registry -> Kubernetes.
+// Replace every <PLACEHOLDER>. Credential ids refer to entries in Jenkins > Credentials.
+@Library('jenkins-pipeline-library@v1.0.0') _
+
+def image
+
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+    }
+
+    parameters {
+        choice(name: 'REGISTRY', choices: ['dockerhub', 'ecr'], description: 'Target container registry')
+        booleanParam(name: 'DEPLOY', defaultValue: false, description: 'Deploy to Kubernetes after a successful build')
+    }
+
+    stages {
+        stage('Unit tests')        { steps { mavenUnitTest() } }
+        stage('Integration tests') { steps { mavenIntegrationTest() } }
+
+        stage('SonarQube analysis') {
+            steps { sonarQubeAnalysis(installationName: 'sonarqube', projectKey: '<PROJECT_KEY>') }
+        }
+        stage('Quality gate') {
+            steps { sonarQubeQualityGate(timeoutMinutes: 10) }
+        }
+
+        stage('Package') { steps { mavenBuild() } }
+
+        stage('Trivy filesystem scan') {
+            steps { trivyScan(type: 'fs', target: '.') }
+        }
+
+        stage('Docker build') {
+            steps {
+                script {
+                    Map imageConfig = params.REGISTRY == 'ecr'
+                        ? [registry: 'ecr', awsAccountId: '<AWS_ACCOUNT_ID>', awsRegion: '<AWS_REGION>', name: '<IMAGE_NAME>']
+                        : [registry: 'dockerhub', namespace: '<DOCKERHUB_NAMESPACE>', name: '<IMAGE_NAME>']
+                    imageConfig.tags = imageTags()
+                    image = dockerBuild(image: imageConfig)
+                }
+            }
+        }
+
+        stage('Trivy image scan') {
+            steps { trivyScan(type: 'image', target: image.primaryReference) }
+        }
+
+        stage('Push image') {
+            steps {
+                script {
+                    if (params.REGISTRY == 'ecr') {
+                        dockerPush(image: image, awsCredentialsId: 'aws-credentials')
+                    } else {
+                        dockerPush(image: image, credentialsId: 'dockerhub-credentials')
+                    }
+                }
+            }
+        }
+
+        stage('Deploy') {
+            when { expression { params.DEPLOY } }
+            steps {
+                kubernetesDeploy(manifests: 'k8s', namespace: '<NAMESPACE>', deployment: '<DEPLOYMENT>',
+                                 image: image.primaryReference,
+                                 kubeconfigCredentialsId: 'kubeconfig')
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                if (image) {
+                    dockerCleanup(image: image)
+                }
+            }
+        }
+    }
+}

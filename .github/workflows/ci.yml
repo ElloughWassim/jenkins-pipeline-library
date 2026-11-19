@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Unit tests and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      # npm-groovy-lint ships a Groovy 4 runtime and CodeNarc; we reuse that runtime
+      # to execute the self-contained test suite.
+      - name: Install npm-groovy-lint
+        run: npm install --global npm-groovy-lint@19
+
+      - name: Lint Groovy sources (CodeNarc)
+        run: npm-groovy-lint --path . --files '**/{*.groovy,Jenkinsfile*}' --failon error
+
+      - name: Run tests
+        run: |
+          GROOVY_LIB="$(npm root --global)/npm-groovy-lint/lib/java/groovy/lib"
+          java -cp "$GROOVY_LIB/*" groovy.ui.GroovyMain test/run-tests.groovy
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
