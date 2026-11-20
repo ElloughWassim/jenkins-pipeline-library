@@ -176,12 +176,6 @@ Releases are Git tags (`vX.Y.Z`). Consumers pin a tag in `@Library`.
 
 ## License and attribution
 
-Released under the [MIT License](LICENSE).
-
-This library is an independent implementation written by ElloughWassim. The idea and some step names were
-inspired by [`iam-vikash/jenkins_shared_lib`](https://github.com/iam-vikash/jenkins_shared_lib), a tutorial
-project by Vikash. That repository has no license, so no code was copied from it. Credit for the original
-learning material belongs to its author.
 
 ## Maintainer
 
