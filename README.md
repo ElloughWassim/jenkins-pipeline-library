@@ -1,16 +1,31 @@
 # Jenkins Pipeline Library
 
-[![CI](https://github.com/ElloughWassim/jenkins-pipeline-library/actions/workflows/ci.yml/badge.svg)](https://github.com/ElloughWassim/jenkins-pipeline-library/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+A reusable Jenkins Shared Library for Java/Maven and container delivery pipelines. It packages the usual
+stages (build, unit and integration tests, SonarQube analysis and Quality Gate, OWASP Dependency-Check,
+Trivy scanning, Docker Hub or Amazon ECR publishing, Kubernetes deployment) as small, validated and tested
+pipeline steps.
 
-A reusable [Jenkins Shared Library](https://www.jenkins.io/doc/book/pipeline/shared-libraries/) for Java/Maven
-and container delivery pipelines. It covers build, test, SonarQube quality gates, OWASP Dependency-Check,
-Trivy scanning, Docker Hub / Amazon ECR publishing and Kubernetes deployment.
+## Table of Contents
 
-## Overview
+- [Project Overview](#project-overview)
+- [Key Features](#key-features)
+- [Architecture Overview](#architecture-overview)
+- [Technology Stack](#technology-stack)
+- [Project Structure](#project-structure)
+- [Prerequisites](#prerequisites)
+- [Installation and Configuration](#installation-and-configuration)
+- [Step Reference](#step-reference)
+- [Usage](#usage)
+- [Testing and Validation](#testing-and-validation)
+- [CI/CD Pipeline](#cicd-pipeline)
+- [Security Implementation](#security-implementation)
+- [License](#license)
+- [Author](#author)
 
-Pipelines often copy the same 200 lines of shell between projects. This library turns those stages into small,
-validated, tested steps, so a `Jenkinsfile` describes *what* happens and the library decides *how*:
+## Project Overview
+
+Pipelines often duplicate the same shell snippets from one project to the next. This library moves those
+stages into versioned steps, so a `Jenkinsfile` describes *what* happens and the library decides *how*:
 
 ```groovy
 @Library('jenkins-pipeline-library@v1.0.0') _
@@ -19,41 +34,53 @@ stage('Quality gate') { steps { sonarQubeQualityGate() } }
 stage('Image scan')   { steps { trivyScan(type: 'image', target: image.primaryReference) } }
 ```
 
-## Main features
+The current release is **`v1.0.0`** (see `CHANGELOG.md`).
 
-- **One image model for two registries:** Docker Hub and Amazon ECR, selected by a single `registry` key.
-- **Immutable image tags:** `<build number>-<git sha>`, with `latest` only as an extra tag.
-- **Security gates that really gate:** Trivy and the SonarQube Quality Gate fail the build by default.
-  Reports are always archived.
-- **Safe shell usage:** every value placed in `sh` is validated or quoted. Registry passwords go through
-  `--password-stdin` and are never interpolated by Groovy.
-- **Reproducible Maven:** batch mode, no download progress, Maven Wrapper auto-detection.
-- **Safe deployments:** `kubernetesDeploy` renders the image into a temporary copy of the manifests, waits for the rollout and undoes it on failure.
-- **Tested:** a self-contained test suite runs every step against a mocked pipeline context in CI.
+## Key Features
 
-## Technologies and tools
+- **One image model for two registries.** Docker Hub and Amazon ECR are selected with a single `registry` key.
+- **Immutable image tags.** `imageTags()` returns `<BUILD_NUMBER>-<short git sha>` first, with optional extra
+  tags (`latest` by default).
+- **Blocking security gates.** `trivyScan` and `sonarQubeQualityGate` fail the build by default. Report-only
+  mode must be requested explicitly. Trivy and Dependency-Check reports are always archived.
+- **Input validation.** Image names, tags, AWS account IDs, regions, Maven goals, profiles and paths are
+  checked against strict patterns before they reach `sh`. Free-form values are single-quoted.
+- **Safe registry login.** Passwords are piped through `--password-stdin` inside single-quoted `sh` strings,
+  so Groovy never interpolates them.
+- **Reproducible Maven.** Batch mode, no download progress, automatic use of `./mvnw` when it exists.
+- **Deployment with rollback.** `kubernetesDeploy` renders the image into a temporary copy of the manifests,
+  waits for the rollout and runs `kubectl rollout undo` if it fails.
 
-Jenkins Pipeline (Groovy) · Maven · SonarQube · OWASP Dependency-Check · Trivy · Docker · Amazon ECR · Kubernetes ·
-GitHub Actions · CodeNarc (npm-groovy-lint) · Gitleaks
-
-## Architecture overview
+## Architecture Overview
 
 ```mermaid
 flowchart LR
-    JF[Jenkinsfile in an application repo] -->|"@Library('jenkins-pipeline-library@v1.0.0')"| V[vars/*.groovy steps]
+    JF[Jenkinsfile in an application repository] -->|"@Library('jenkins-pipeline-library@v1.0.0')"| V[vars/*.groovy<br/>public steps]
     V --> S[src/io/github/elloughwassim/jenkins<br/>ImageReference · Shell · Maven]
-    V -->|sh| T[(Agent tools:<br/>mvn · docker · trivy · aws · kubectl)]
-    V -->|plugin steps| P[(Jenkins plugins:<br/>SonarQube · Dependency-Check · Credentials)]
+    V -->|sh| T[(Agent tools<br/>mvn · docker · trivy · aws · kubectl)]
+    V -->|plugin steps| P[(Jenkins plugins<br/>SonarQube · Dependency-Check · Credentials · JUnit)]
 ```
 
-`vars/` holds the public steps (the API). `src/` holds pure helper classes with the validation logic, which
-can be tested without Jenkins.
+- `vars/` contains the public steps (the library API).
+- `src/` contains plain Groovy helper classes holding the validation logic. They can be tested without Jenkins.
 
-## Repository structure
+## Technology Stack
 
-```
+| Area | Tools |
+|---|---|
+| Language | Groovy (Jenkins Pipeline) |
+| Build and tests | Maven, Maven Wrapper, Surefire / Failsafe reports via JUnit |
+| Code quality | SonarQube (Maven scanner or SonarScanner CLI) |
+| Security | OWASP Dependency-Check, Trivy |
+| Containers | Docker, Docker Hub, Amazon ECR (AWS CLI v2) |
+| Deployment | Kubernetes (`kubectl`) |
+| Library CI | GitHub Actions, CodeNarc (`npm-groovy-lint`), Gitleaks |
+
+## Project Structure
+
+```text
 .
-├── vars/                         # Global pipeline steps (public API)
+├── vars/                              # Public pipeline steps
 │   ├── gitCheckout.groovy
 │   ├── mavenBuild.groovy  mavenUnitTest.groovy  mavenIntegrationTest.groovy
 │   ├── sonarQubeAnalysis.groovy  sonarQubeQualityGate.groovy
@@ -61,122 +88,152 @@ can be tested without Jenkins.
 │   ├── imageTags.groovy  dockerBuild.groovy  dockerPush.groovy  dockerCleanup.groovy
 │   └── kubernetesDeploy.groovy
 ├── src/io/github/elloughwassim/jenkins/
-│   ├── ImageReference.groovy     # Docker Hub / ECR reference + validation
-│   ├── Maven.groovy              # Maven command builder
-│   └── Shell.groovy              # Quoting and input validation
-├── test/run-tests.groovy         # Self-contained test suite (mocked pipeline)
+│   ├── ImageReference.groovy          # Docker Hub / ECR reference and validation
+│   ├── Maven.groovy                   # Maven command builder
+│   └── Shell.groovy                   # Quoting and input validation
+├── test/run-tests.groovy              # Self-contained test suite (mocked pipeline context)
 ├── examples/Jenkinsfile.maven-docker-k8s
-└── .github/workflows/ci.yml      # Lint + tests + secret scan
+├── .github/workflows/ci.yml           # Lint, tests, secret scan
+├── .groovylintrc.json
+├── CHANGELOG.md
+└── LICENSE
 ```
 
 ## Prerequisites
 
 | Component | Requirement |
 |---|---|
-| Jenkins | 2.4xx LTS or newer with **Pipeline**, **Git**, **Credentials Binding** |
-| Optional plugins | **SonarQube Scanner**, **OWASP Dependency-Check**, **Pipeline: AWS Steps** / **AWS Credentials** (ECR), **JUnit** |
-| Agent tools | `git`, `docker`, `trivy`, and as needed `mvn`/JDK, `aws` CLI v2, `kubectl` |
+| Jenkins plugins (core) | Pipeline, Git, Credentials Binding |
+| Jenkins plugins (per step) | JUnit (`mavenUnitTest`, `mavenIntegrationTest`), SonarQube Scanner (`sonarQubeAnalysis`, `sonarQubeQualityGate`), OWASP Dependency-Check (`owaspDependencyCheck`), AWS Credentials / Pipeline: AWS Steps (`dockerPush` to ECR with `awsCredentialsId`) |
+| Agent tools | `git`, `docker`, `trivy`, and depending on the steps used: JDK + Maven (or a Maven Wrapper in the project), AWS CLI v2, `kubectl` |
 
-## Installation (register the library in Jenkins)
+## Installation and Configuration
 
-1. **Manage Jenkins → System → Global Trusted Pipeline Libraries → Add**
-2. Name: `jenkins-pipeline-library`
-3. Default version: `v1.0.0` (a tag; pin a tag instead of `main` for reproducible builds)
-4. Retrieval method: **Modern SCM → Git**, project repository
-   `https://github.com/ElloughWassim/jenkins-pipeline-library.git`
+### Register the library in Jenkins
 
-Register it as a *trusted* global library. The helper classes use standard Groovy methods that a
-sandboxed folder-level library could require script approvals for.
+1. Open **Manage Jenkins → System → Global Trusted Pipeline Libraries → Add**.
+2. Name: `jenkins-pipeline-library`.
+3. Default version: `v1.0.0` (pin a tag rather than `main` for reproducible builds).
+4. Retrieval method: **Modern SCM → Git**, project repository:
 
-## Configuration
+   ```text
+   https://github.com/ElloughWassim/jenkins-pipeline-library.git
+   ```
+
+   If the repository is private, select a Jenkins credential that can read it.
+
+Register it as a **trusted** global library: the helper classes use standard Groovy methods that a sandboxed
+folder-level library may need script approvals for.
 
 ### Jenkins credentials used by the steps
 
-| Credential id (your choice) | Kind | Used by |
+| Credential ID (configurable) | Kind | Used by |
 |---|---|---|
 | `dockerhub-credentials` | Username with password (password = Docker Hub access token) | `dockerPush` (Docker Hub) |
-| `aws-credentials` | AWS Credentials (or use an instance/IRSA role instead) | `dockerPush` (ECR) |
-| `kubeconfig` | Secret file | `kubernetesDeploy` |
+| `aws-credentials` | AWS Credentials (optional when the agent has an instance or IRSA role) | `dockerPush` (ECR) |
+| `kubeconfig` | Secret file | `kubernetesDeploy` (optional, otherwise the agent's kubeconfig is used) |
 | `nvd-api-key` | Secret text | `owaspDependencyCheck` |
-| SonarQube token | Secret text, referenced by the SonarQube server configuration | `sonarQubeAnalysis` |
+| SonarQube token | Secret text, referenced by the SonarQube server configuration or `credentialsId` | `sonarQubeAnalysis`, `sonarQubeQualityGate` |
+
+`sonarQubeQualityGate` also requires a SonarQube webhook pointing to `<JENKINS_URL>/sonarqube-webhook/`.
 
 ### Image configuration map
 
 ```groovy
 // Docker Hub
 [registry: 'dockerhub', namespace: '<DOCKERHUB_NAMESPACE>', name: 'my-app', tags: imageTags()]
+
 // Amazon ECR
 [registry: 'ecr', awsAccountId: '<AWS_ACCOUNT_ID>', awsRegion: '<AWS_REGION>', name: 'my-app', tags: imageTags()]
 ```
 
-### Step reference
+Unreplaced placeholders such as `<AWS_ACCOUNT_ID>` fail validation and stop the build.
 
-| Step | Purpose | Key options (defaults) |
+## Step Reference
+
+`*` = required.
+
+| Step | Purpose | Options (defaults) |
 |---|---|---|
 | `gitCheckout` | Clone a repository | `url`*, `branch` (`main`), `credentialsId` |
 | `mavenBuild` | Package | `goals` (`clean package`), `skipTests` (`true`), `profiles`, `properties` |
-| `mavenUnitTest` | `test` phase + JUnit report | `profiles`, `publishReports` (`true`) |
-| `mavenIntegrationTest` | `verify` phase (Failsafe) | `skipUnitTestsProperty` (`skipUTs`), `profiles` |
-| `sonarQubeAnalysis` | SonarQube scan | `installationName`*, `projectKey`, `scanner` (`maven`\|`cli`) |
-| `sonarQubeQualityGate` | Wait for the gate | `timeoutMinutes` (`10`), `abortPipeline` (`true`) |
-| `owaspDependencyCheck` | Dependency CVE scan | `odcInstallation`*, `failOnCvss` (`7`), `nvdApiKeyCredentialsId` |
-| `trivyScan` | Vulnerability/secret/IaC scan | `type` (`fs`\|`image`\|`config`\|`repo`), `target`*, `severity` (`HIGH,CRITICAL`), `failBuild` (`true`) |
-| `imageTags` | Build tags | `version`, `extraTags` (`['latest']`) |
-| `dockerBuild` | Build + tag | `image`*, `context` (`.`), `dockerfile`, `buildArgs` (a `null` value is read from the environment) |
-| `dockerPush` | Login, push, logout | `image`*, `credentialsId` (Docker Hub), `awsCredentialsId` (ECR) |
-| `dockerCleanup` | Remove local tags | `image`* |
-| `kubernetesDeploy` | Render image, apply, rollout, rollback | `manifests`*, `namespace`*, `deployment`*, `image`*, `imagePlaceholder` (`IMAGE_PLACEHOLDER`), `kubeconfigCredentialsId` |
+| `mavenUnitTest` | `test` phase and Surefire report | `profiles`, `properties`, `publishReports` (`true`) |
+| `mavenIntegrationTest` | `verify` phase (Failsafe) and report | `skipUnitTestsProperty` (`skipUTs`, `null` runs all tests), `profiles`, `properties`, `publishReports` (`true`) |
+| `sonarQubeAnalysis` | SonarQube scan inside `withSonarQubeEnv` | `installationName`*, `projectKey`, `projectName`, `properties`, `credentialsId`, `scanner` (`maven` \| `cli`), `scannerTool` (`sonar-scanner`) |
+| `sonarQubeQualityGate` | Wait for the Quality Gate | `timeoutMinutes` (`10`), `abortPipeline` (`true`), `credentialsId` |
+| `owaspDependencyCheck` | Dependency CVE scan and report publishing | `odcInstallation`*, `failOnCvss` (`7`), `nvdApiKeyCredentialsId`, `scanPath` (`.`), `reportDir` (`reports/dependency-check`), `extraArguments` |
+| `trivyScan` | Vulnerability, secret and misconfiguration scan | `type` (`fs` \| `image` \| `config` \| `repo`), `target`*, `severity` (`HIGH,CRITICAL`), `failBuild` (`true`), `ignoreUnfixed` (`true`), `scanners`, `reportDir` (`reports/trivy`), `reportName` |
+| `imageTags` | Build the tag list | `version`, `extraTags` (`['latest']`) |
+| `dockerBuild` | Build and tag the image | `image`*, `context` (`.`), `dockerfile` (`Dockerfile`), `buildArgs` (a `null` value is read from the environment) |
+| `dockerPush` | Login, push every tag, logout | `image`*, `credentialsId` (Docker Hub), `awsCredentialsId` (ECR) |
+| `dockerCleanup` | Remove local tags, never fails the build | `image`* |
+| `kubernetesDeploy` | Render image, apply, wait for rollout, roll back on failure | `manifests`*, `namespace`*, `deployment`*, `image`*, `imagePlaceholder` (`IMAGE_PLACEHOLDER`), `rolloutTimeout` (`180s`), `kubeconfigCredentialsId` |
 
-`*` = required. Options are meant to come from the `Jenkinsfile` (trusted code). Values coming from build
-parameters are validated by the library before use.
+Options are meant to come from the `Jenkinsfile` (trusted code). Values coming from build parameters are
+validated before use.
 
-## How to use it
+## Usage
 
-See [`examples/Jenkinsfile.maven-docker-k8s`](examples/Jenkinsfile.maven-docker-k8s) for a complete pipeline.
-Real consumers:
+`examples/Jenkinsfile.maven-docker-k8s` contains a complete declarative pipeline:
 
-- [`springboot-terraform-eks`](https://github.com/ElloughWassim/springboot-terraform-eks): Spring Boot → ECR/Docker Hub → EKS
-- [`jpetstore-kubernetes-deployment`](https://github.com/ElloughWassim/jpetstore-kubernetes-deployment): JPetStore → Docker → Kubernetes
+```text
+Unit tests → Integration tests → SonarQube analysis → Quality gate → Package → Trivy fs
+  → Docker build → Trivy image → Push (Docker Hub | ECR) → Deploy to Kubernetes (optional)
+```
 
-## How to run the tests
+The library is used by the `springboot-terraform-eks`, `jpetstore-kubernetes-deployment` and
+`devsecops-jenkins-trivy-sonarqube` projects, which all pin `v1.0.0`.
 
-The suite needs only Java 17+ and a Groovy 4 runtime. Without a local Groovy install, reuse the one bundled
-with npm-groovy-lint, exactly like CI does:
+## Testing and Validation
+
+The test suite needs a Java runtime and Groovy 4. Without a local Groovy installation, reuse the runtime
+bundled with `npm-groovy-lint`, as CI does (CI uses Java 21 and Node.js 22):
 
 ```bash
 npm install --global npm-groovy-lint@19
 GROOVY_LIB="$(npm root --global)/npm-groovy-lint/lib/java/groovy/lib"
-java -cp "$GROOVY_LIB/*" groovy.ui.GroovyMain test/run-tests.groovy   # tests
-npm-groovy-lint --path . --files '**/{*.groovy,Jenkinsfile*}' --failon error  # lint
+
+# Tests
+java -cp "$GROOVY_LIB/*" groovy.ui.GroovyMain test/run-tests.groovy
+
+# Lint (CodeNarc)
+npm-groovy-lint --path . --files '**/{*.groovy,Jenkinsfile*}' --failon error
 ```
 
-The tests mock the Jenkins pipeline context (`sh`, `withCredentials`, `error`…) and assert the exact commands
-each step produces, including the failure paths (Trivy findings, failed rollouts, invalid input).
-They do **not** start a Jenkins instance. A full integration run still requires a real Jenkins controller.
+`test/run-tests.groovy` loads each of the 13 steps with a mocked pipeline context (`sh`, `withCredentials`,
+`error`, …) and asserts on the generated commands, including failure paths such as Trivy findings, failed
+rollouts and invalid input. It does **not** start Jenkins: a full integration run still requires a real
+Jenkins controller.
 
-## CI/CD pipeline
+## CI/CD Pipeline
 
-`.github/workflows/ci.yml` runs on every push and pull request:
+`.github/workflows/ci.yml` runs on pushes to `main` and on pull requests:
 
-1. CodeNarc lint (`npm-groovy-lint`), which fails on errors
-2. The test suite
-3. Gitleaks secret scan over the full history
+| Job | What it does |
+|---|---|
+| Unit tests and lint | CodeNarc lint with `npm-groovy-lint` (fails on errors), then the test suite |
+| Secret scan | Gitleaks over the full Git history |
 
 Releases are Git tags (`vX.Y.Z`). Consumers pin a tag in `@Library`.
 
-## Security considerations
+## Security Implementation
 
-- Docker Hub passwords and tokens are piped through `--password-stdin` inside single-quoted `sh` strings, so
-  Groovy never interpolates them and Jenkins does not warn about insecure interpolation.
-- Image names, tags, AWS account ids, regions, Maven goals, profiles and paths are validated against strict
-  patterns. Free-form values are single-quoted.
-- Trivy and the SonarQube Quality Gate fail the build by default. Report-only mode must be requested explicitly.
-- Build arguments are visible in the image history. Pass sensitive values with a `null` value (read from the environment, never on the command line) and never use build arguments for server-side secrets.
+- Docker Hub passwords and tokens go through `--password-stdin` inside single-quoted `sh` strings: the shell
+  expands the secret, Groovy never interpolates it.
+- ECR login uses `aws ecr get-login-password | docker login --password-stdin`.
+- All values placed in shell commands are validated or single-quoted.
+- Trivy and the SonarQube Quality Gate fail the build by default.
+- Docker build arguments are visible in the image history. Pass sensitive values with a `null` value (read
+  from the environment, never written on the command line), and never use build arguments for server-side
+  secrets.
 - Prefer short-lived cloud credentials (instance roles, IRSA, OIDC) over static AWS keys.
 
-## License and attribution
+## License
 
+This project is licensed under the MIT License. See [`LICENSE`](LICENSE).
 
-## Maintainer
+Copyright (c) 2026 ElloughWassim.
 
-**ElloughWassim**, [github.com/ElloughWassim](https://github.com/ElloughWassim)
+## Author
+
+**ElloughWassim** · [github.com/ElloughWassim](https://github.com/ElloughWassim)
